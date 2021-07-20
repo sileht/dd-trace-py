@@ -71,7 +71,7 @@ commands:
     description: "Install riot"
     steps:
       # Make sure we install and run riot on Python 3
-      - run: pip3 install -U riot
+      - run: pip3 install git+https://github.com/datadog/riot.git@fix-layer-deps
 
   restore_tox_cache:
     description: "Restore .tox directory from previous runs for faster installs"
