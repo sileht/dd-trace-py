@@ -330,15 +330,21 @@ def traced_wsgi_app(pin, wrapped, instance, args, kwargs):
             request_headers=request.headers,
         )
 
-        appsec.process_request(
-            span,
-            method=request.method,
-            target=request.url,
-            query=request.args,
-            headers=werkzeug.datastructures.MultiDict(request.headers).to_dict(flat=False),
-            cookies=request.cookies,
-            remote_ip=request.remote_addr,
-        )
+        try:
+            appsec.process_request(
+                span,
+                method=request.method,
+                target=request.url,
+                headers=request.headers,
+                query=request.args,
+                remote_ip=request.remote_addr,
+            )
+        except Exception:
+            log.warning(
+                "AppSec module failed to process your request. Your application is not protected. "
+                "Please report this issue to support@datadoghq.com",
+                exc_info=True,
+            )
 
         return wrapped(environ, start_response)
 
@@ -493,11 +499,16 @@ def request_tracer(name):
 
             if not span.get_tag(FLASK_VIEW_ARGS) and request.view_args and config.flask.get("collect_view_args"):
                 for k, v in request.view_args.items():
-                    span._set_str_tag(u".".join((FLASK_VIEW_ARGS, k)), v)
+                    # DEV: Do not use `_set_str_tag` here since view args can be string/int/float/path/uuid/etc
+                    #      https://flask.palletsprojects.com/en/1.1.x/api/#url-route-registrations
+                    span.set_tag(u".".join((FLASK_VIEW_ARGS, k)), v)
         except Exception:
             log.debug('failed to set tags for "flask.request" span', exc_info=True)
 
-        with pin.tracer.trace(".".join(("flask", name)), service=trace_utils.int_service(pin, config.flask, pin)):
+        with pin.tracer.trace(
+            ".".join(("flask", name)), service=trace_utils.int_service(pin, config.flask, pin)
+        ) as request_span:
+            request_span._ignore_exception(werkzeug.exceptions.NotFound)
             return wrapped(*args, **kwargs)
 
     return _traced_request

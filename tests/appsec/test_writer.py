@@ -11,6 +11,7 @@ import mock
 import six
 
 from ddtrace.appsec.internal.writer import HTTPEventWriter
+from ddtrace.internal import compat
 
 
 if sys.version_info[0] >= 3:
@@ -38,7 +39,7 @@ class FakeAppSecHandler(server.BaseHTTPRequestHandler):
     def do_POST(self):
         self.server.num_requests += 1
 
-        assert self.path.endswith("v1/input")
+        assert self.path.endswith("api/v2/appsecevts")
         assert self.headers.get("Content-Type") == "application/json"
 
         # Keep the request body
@@ -252,7 +253,7 @@ class HTTPEventWriterTestCase(unittest.TestCase):
         self.assert_no_exceptions()
         self.assertEqual(self.fake_server.num_requests, 1)
         self.assertEqual(len(self.fake_server.payloads), 1)
-        data = json.loads(self.fake_server.payloads[0])
+        data = json.loads(compat.to_unicode(self.fake_server.payloads[0]))
         self.assertEqual(
             data,
             {

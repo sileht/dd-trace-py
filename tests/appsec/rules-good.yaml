@@ -1,0 +1,12 @@
+version: '0.1'
+events:
+ - id: 42
+   name: test
+   conditions:
+    - operation: match_regex
+      parameters:
+        inputs:
+         - http.server.query
+        regex: '<script>'
+   transformers:
+    - urlDecode

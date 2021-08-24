@@ -1,6 +1,5 @@
 from datetime import datetime
 import json
-import logging
 from typing import Any
 from typing import Mapping
 from typing import Optional
@@ -22,14 +21,16 @@ from ddtrace.appsec.internal.events.context import Http_0_1_0
 from ddtrace.appsec.internal.events.context import get_required_context
 from ddtrace.appsec.internal.protections import BaseProtection
 from ddtrace.appsec.internal.utils import event_rules_to_sqreen
+from ddtrace.internal import logger
 from ddtrace.internal.compat import utc
+from ddtrace.utils.formats import get_env
 from ddtrace.utils.http import strip_query_string
 from ddtrace.utils.time import StopWatch
 
 
-log = logging.getLogger(__name__)
+log = logger.get_logger(__name__)
 
-DEFAULT_SQREEN_BUDGET_MS = 5.0
+DEFAULT_WAF_BUDGET_MS = 5.0
 
 
 class SqreenLibrary(BaseProtection):
@@ -40,19 +41,26 @@ class SqreenLibrary(BaseProtection):
     def __init__(self, rules, budget_ms=None):
         # type: (str, Optional[float]) -> None
         if budget_ms is None:
-            budget_ms = DEFAULT_SQREEN_BUDGET_MS
+            budget_ms = float(
+                get_env("appsec", "waf_budget_ms", default=DEFAULT_WAF_BUDGET_MS)  # type: ignore[arg-type]
+            )
         self._budget = int(budget_ms * 1000)
-        self._instance = waf.WAFEngine(rules)
+        self._instance = waf.WAFEngine(event_rules_to_sqreen(rules))
 
     def process(self, span, data):
         # type: (Span, Mapping[str, Any]) -> Sequence[Attack_0_1_0]
+        # DEV: Headers require special transformation as the integrations don't
+        # do it yet (implemented in https://github.com/DataDog/dd-trace-py/pull/2762)
+        headers = {k.lower(): v for k, v in data.get("headers", {}).items()}
+        data = dict(data)
+        data["headers"] = headers
         with StopWatch() as timer:
             context = self._instance.create_context()
             ret = context.run(data, self._budget)
         elapsed_ms = timer.elapsed() * 1000
-        log.debug("Sqreen context returned %r in %.5fms for %r", ret.data, elapsed_ms, span)
+        log.debug("context returned %r in %.5fms for %r", ret.data, elapsed_ms, span)
         span.set_metric("_dd.sq.process_ms", elapsed_ms)
-        if elapsed_ms > self._budget:
+        if ret.timeout:
             span.set_metric("_dd.sq.overtime_ms", elapsed_ms - self._budget)
         if ret.report:
             span.set_metric("_dd.sq.reports", 1)
@@ -74,7 +82,7 @@ class SqreenLibrary(BaseProtection):
 
     @staticmethod
     def sqreen_waf_to_attacks(data, context=None, blocked=False, at=None):
-        """Convert a Sqreen WAF result to an AppSec Attack event."""
+        """Convert a Sqreen WAF result to an AppSec Attack events."""
         if at is None:
             at = datetime.now(utc)
         waf_data = json.loads(data.decode("utf-8", errors="replace"))
@@ -95,8 +103,3 @@ class SqreenLibrary(BaseProtection):
                     ),
                     context=context or get_required_context(),
                 )
-
-    @classmethod
-    def from_event_rules(cls, rules, budget_ms=None):
-        """Load the Sqreen library from event rules."""
-        return cls(event_rules_to_sqreen(rules), budget_ms=budget_ms)

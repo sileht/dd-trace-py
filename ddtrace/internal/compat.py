@@ -71,8 +71,8 @@ if PYTHON_VERSION_INFO >= (3, 7):
 else:
     pattern_type = re._pattern_type  # type: ignore[misc,attr-defined]
 
-# UTC timezone support for Python 2 datetime
-if PY3:
+# UTC timezone support
+if PYTHON_VERSION_INFO >= (3, 6):
     utc = datetime.timezone.utc
 else:
     _ZERO = datetime.timedelta(0)
@@ -89,7 +89,7 @@ else:
         def dst(self, dt):
             return _ZERO
 
-    utc = _UTC()
+    utc = _UTC()  # type: ignore
 
 
 def is_integer(obj):

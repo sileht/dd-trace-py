@@ -5,12 +5,11 @@ from tests.utils import TracerTestCase
 
 
 class AppSecEventsTestCase(TracerTestCase):
-
     def test_required_context(self):
         with self.trace("test", service="test") as span:
             self.assertEqual(
                 context.get_required_context(),
-                context.RequiredContext_0_1_0(
+                context.Context_0_1_0(
                     service_stack=mock.ANY,
                     tracer=mock.ANY,
                     trace=context.Trace_0_1_0(span.trace_id),

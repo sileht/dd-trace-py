@@ -1,8 +1,12 @@
 # -*- coding: utf-8 -*-
+import json
+
 import flask
 from flask import abort
+from flask import jsonify
 from flask import make_response
 import mock
+import werkzeug
 
 from ddtrace import appsec
 from ddtrace.constants import ANALYTICS_SAMPLE_RATE_KEY
@@ -83,6 +87,50 @@ class FlaskRequestTestCase(BaseFlaskTestCase):
         self.assertEqual(handler_span.name, "tests.contrib.flask.test_request.index")
         self.assertEqual(handler_span.resource, "/")
         self.assertEqual(req_span.error, 0)
+
+    def test_route_params_request(self):
+        """
+        When making a request to an endpoint with non-string url params
+            We create the expected spans
+        """
+
+        @self.app.route("/route_params/<first>/<int:second>/<float:third>/<path:fourth>")
+        def route_params(first, second, third, fourth):
+            return jsonify(
+                {
+                    "first": first,
+                    "second": second,
+                    "third": third,
+                    "fourth": fourth,
+                }
+            )
+
+        res = self.client.get("/route_params/test/100/5.5/some/sub/path")
+        self.assertEqual(res.status_code, 200)
+        if isinstance(res.data, bytes):
+            data = json.loads(res.data.decode())
+        else:
+            data = json.loads(res.data)
+
+        assert data == {
+            "first": "test",
+            "second": 100,
+            "third": 5.5,
+            "fourth": "some/sub/path",
+        }
+
+        spans = self.get_spans()
+        self.assertEqual(len(spans), 8)
+
+        root = spans[0]
+        assert root.name == "flask.request"
+        assert root.get_tag(http.URL) == "http://localhost/route_params/test/100/5.5/some/sub/path"
+        assert root.get_tag("flask.endpoint") == "route_params"
+        assert root.get_tag("flask.url_rule") == "/route_params/<first>/<int:second>/<float:third>/<path:fourth>"
+        assert root.get_tag("flask.view_args.first") == "test"
+        assert root.get_metric("flask.view_args.second") == 100.0
+        assert root.get_metric("flask.view_args.third") == 5.5
+        assert root.get_tag("flask.view_args.fourth") == "some/sub/path"
 
     def test_request_query_string_trace(self):
         """Make sure when making a request that we create the expected spans and capture the query string."""
@@ -465,10 +513,10 @@ class FlaskRequestTestCase(BaseFlaskTestCase):
         self.assertEqual(dispatch_span.service, "flask")
         self.assertEqual(dispatch_span.name, "flask.dispatch_request")
         self.assertEqual(dispatch_span.resource, "flask.dispatch_request")
-        self.assertEqual(dispatch_span.error, 1)
-        self.assertTrue(dispatch_span.get_tag("error.msg").startswith("404 Not Found"))
-        self.assertTrue(dispatch_span.get_tag("error.stack").startswith("Traceback"))
-        self.assertEqual(dispatch_span.get_tag("error.type"), "werkzeug.exceptions.NotFound")
+        self.assertEqual(dispatch_span.error, 0)
+        self.assertIsNone(dispatch_span.get_tag("error.msg"))
+        self.assertIsNone(dispatch_span.get_tag("error.stack"))
+        self.assertIsNone(dispatch_span.get_tag("error.type"))
 
     def test_request_abort_404(self):
         """
@@ -531,10 +579,10 @@ class FlaskRequestTestCase(BaseFlaskTestCase):
         self.assertEqual(dispatch_span.service, "flask")
         self.assertEqual(dispatch_span.name, "flask.dispatch_request")
         self.assertEqual(dispatch_span.resource, "flask.dispatch_request")
-        self.assertEqual(dispatch_span.error, 1)
-        self.assertTrue(dispatch_span.get_tag("error.msg").startswith("404 Not Found"))
-        self.assertTrue(dispatch_span.get_tag("error.stack").startswith("Traceback"))
-        self.assertEqual(dispatch_span.get_tag("error.type"), "werkzeug.exceptions.NotFound")
+        self.assertEqual(dispatch_span.error, 0)
+        self.assertIsNone(dispatch_span.get_tag("error.msg"))
+        self.assertIsNone(dispatch_span.get_tag("error.stack"))
+        self.assertIsNone(dispatch_span.get_tag("error.type"))
 
         # Handler span
         handler_span = spans[4]
@@ -859,22 +907,55 @@ class FlaskRequestTestCase(BaseFlaskTestCase):
 
     def test_http_integration_appsec(self):
         fake = mock.Mock()
+        fake.process.return_value = []
         appsec._mgmt.protections.append(fake)
+        try:
+            self.client.get(
+                "/?foo=bar",
+                headers={
+                    "my-header": "my_value",
+                },
+            )
 
-        self.client.get(
-            "/?foo=bar",
-            headers={
-                "my-header": "my_value",
-            },
-        )
+            fake.process.assert_called_with(
+                mock.ANY,
+                dict(
+                    method="GET",
+                    target="http://localhost/?foo=bar",
+                    query=b"foo=bar",
+                    headers=mock.ANY,
+                    remote_ip="127.0.0.1"
+                    if not (flask.__version__.startswith("1.0") and werkzeug.__version__.startswith("2.0"))
+                    else None,
+                    # probable upstream bug:
+                    # REMOTE_ADDR is lost between flask.testing.FlaskClient & werkzeug.test.Client
+                ),
+            )
+            assert fake.process.call_args_list[0][0][1]["headers"]["my-header"] == "my_value"
+        finally:
+            appsec.disable()
 
-        fake.process.assert_called_with(
-            mock.ANY,
-            dict(
-                method="GET",
-                target="http://localhost/?foo=bar",
-                query=b"foo=bar",
-                headers=mock.ANY,
-            ),
-        )
-        assert fake.process.call_args_list[0][0][1]["headers"]["my-header"] == "my_value"
+    def test_http_integration_appsec_failure(self):
+        fake = mock.Mock()
+        fake.process.side_effect = ValueError
+        appsec._mgmt.protections.append(fake)
+        try:
+            self.client.get("/")
+            fake.process.assert_called_once()
+            # Exception should not be propagated
+        finally:
+            appsec.disable()
+
+    def test_http_integration_appsec_headers(self):
+        appsec.enable()
+        try:
+            # Flask integration headers used to be treated as a string
+            # instead of a dict and trigger the protocol violation because
+            # it contained \r\n characters. This test checks that no event
+            # rule triggers.
+            self.client.get("/")
+            traces = self.pop_traces()
+            span = traces[0][0]
+            assert "_dd.sq.reports" not in span.metrics
+        finally:
+            appsec.disable()
