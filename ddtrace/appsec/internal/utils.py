@@ -48,6 +48,42 @@ _EVENT_RULES_MANIFEST_0_1 = {
         run_on_key=False,
         run_on_value=True,
     ),
+    # former addresses
+    "server.request.method": OrderedDict(
+        inherit_from="method",
+        run_on_key=False,
+        run_on_value=True,
+    ),
+    "server.request.uri.raw": OrderedDict(
+        inherit_from="target",
+        run_on_key=False,
+        run_on_value=True,
+    ),
+    "server.request.headers.no_cookies": OrderedDict(
+        inherit_from="headers",
+        run_on_key=False,
+        run_on_value=True,
+    ),
+    "server.request.query": OrderedDict(
+        inherit_from="query",
+        run_on_key=False,
+        run_on_value=True,
+    ),
+    "server.request.cookies": OrderedDict(
+        inherit_from="cookies",
+        run_on_key=False,
+        run_on_value=True,
+    ),
+    "server.request.body": OrderedDict(
+        inherit_from="body",
+        run_on_key=False,
+        run_on_value=True,
+    ),
+    "server.request.path_params": OrderedDict(
+        inherit_from="path_params",
+        run_on_key=False,
+        run_on_value=True,
+    ),
 }
 
 
