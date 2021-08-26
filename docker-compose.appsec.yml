@@ -30,12 +30,12 @@
 version: "3.9"
 services:
     agent:
-        image: datadog/agent-dev:master
+        image: datadog/agent:7.31.0-rc.5
         environment:
          - DD_APPSEC_ENABLED=true
          - DD_APM_NON_LOCAL_TRAFFIC=true
          - DD_DOGSTATSD_NON_LOCAL_TRAFFIC=true
-         - DD_SITE=datad0g.com
+         - DD_SITE=datadoghq.com
          - DD_ENV=appsec-sandbox
          - DD_API_KEY
     app:
