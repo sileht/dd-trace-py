@@ -908,7 +908,7 @@ class FlaskRequestTestCase(BaseFlaskTestCase):
     def test_http_integration_appsec(self):
         fake = mock.Mock()
         fake.process.return_value = []
-        appsec._mgmt.protections.append(fake)
+        appsec._mgmt._protections.append(fake)
         try:
             self.client.get(
                 "/?foo=bar",
@@ -922,7 +922,7 @@ class FlaskRequestTestCase(BaseFlaskTestCase):
                 dict(
                     method="GET",
                     target="http://localhost/?foo=bar",
-                    query=b"foo=bar",
+                    query=mock.ANY,
                     headers=mock.ANY,
                     remote_ip="127.0.0.1"
                     if not (flask.__version__.startswith("1.0") and werkzeug.__version__.startswith("2.0"))
@@ -931,6 +931,7 @@ class FlaskRequestTestCase(BaseFlaskTestCase):
                     # REMOTE_ADDR is lost between flask.testing.FlaskClient & werkzeug.test.Client
                 ),
             )
+            assert fake.process.call_args_list[0][0][1]["query"]["foo"] == "bar"
             assert fake.process.call_args_list[0][0][1]["headers"]["my-header"] == "my_value"
         finally:
             appsec.disable()
@@ -938,7 +939,7 @@ class FlaskRequestTestCase(BaseFlaskTestCase):
     def test_http_integration_appsec_failure(self):
         fake = mock.Mock()
         fake.process.side_effect = ValueError
-        appsec._mgmt.protections.append(fake)
+        appsec._mgmt._protections.append(fake)
         try:
             self.client.get("/")
             fake.process.assert_called_once()
@@ -956,6 +957,7 @@ class FlaskRequestTestCase(BaseFlaskTestCase):
             self.client.get("/")
             traces = self.pop_traces()
             span = traces[0][0]
+            # TODO replace with a fake writer as the metric doesn't exist anymore
             assert "_dd.sq.reports" not in span.metrics
         finally:
             appsec.disable()
